@@ -3,9 +3,12 @@ package retrofit;
 
 import java.io.IOException;
 import java.util.Collections;
+import java.util.concurrent.Executor;
+
 import org.junit.Before;
 import org.junit.Test;
 import retrofit.client.Client;
+import retrofit.client.ClientBase;
 import retrofit.client.Header;
 import retrofit.client.Request;
 import retrofit.client.Response;
@@ -28,7 +31,7 @@ public class ErrorHandlerTest {
   }
 
   /* An HTTP client which always returns a 400 response */
-  static class MockInvalidResponseClient implements Client {
+  static class MockInvalidResponseClient extends ClientBase {
     @Override public Response execute(Request request) throws IOException {
       return new Response(400, "invalid request", Collections.<Header>emptyList(), null);
     }

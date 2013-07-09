@@ -16,6 +16,9 @@
 package retrofit.client;
 
 import java.io.IOException;
+import java.util.concurrent.Future;
+
+import retrofit.RetrofitError;
 
 /**
  * Abstraction of an HTTP client which can execute {@link Request Requests}. This class must be
@@ -27,6 +30,13 @@ public interface Client {
    * into a {@link Response} instance.
    */
   Response execute(Request request) throws IOException;
+  Future executeAsync(Request request, Future future, ResponseCallback callback);
+  boolean needsExecutor();
+
+  interface ResponseCallback {
+    void success(Response response);
+    void failure(RetrofitError e);
+  }
 
   /**
    * Deferred means of obtaining a {@link Client}. For asynchronous requests this will always be

@@ -49,6 +49,8 @@ public class RestAdapterTest {
   @SuppressWarnings("unchecked") // Mock profiler type erasure.
   @Before public void setUp() throws Exception{
     mockClient = mock(Client.class);
+    when(mockClient.needsExecutor())
+            .thenReturn(true);
     mockRequestExecutor = spy(new SynchronousExecutor());
     mockCallbackExecutor = spy(new SynchronousExecutor());
     mockProfiler = mock(Profiler.class);
@@ -95,7 +97,9 @@ public class RestAdapterTest {
     Response response = new Response(200, "OK", NO_HEADERS, new TypedString("{}"));
     when(mockClient.execute(any(Request.class))) //
         .thenReturn(response);
-    Callback<Object> callback = mock(Callback.class);
+    when(mockClient.needsExecutor())
+        .thenReturn(true);
+    Callback< Object > callback = mock(Callback.class);
 
     example.something(callback);
 

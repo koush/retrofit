@@ -22,11 +22,15 @@ import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executor;
+
+import retrofit.Callback;
+import retrofit.RetrofitError;
 import retrofit.mime.TypedInput;
 import retrofit.mime.TypedOutput;
 
 /** Retrofit client that uses {@link HttpURLConnection} for communication. */
-public class UrlConnectionClient implements Client {
+public class UrlConnectionClient extends ClientBase {
   @Override public Response execute(Request request) throws IOException {
     HttpURLConnection connection = openConnection(request);
     prepareRequest(connection, request);

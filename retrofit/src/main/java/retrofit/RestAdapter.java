@@ -17,13 +17,16 @@ package retrofit;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.UnsupportedEncodingException;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.lang.reflect.Type;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.Callable;
 import java.util.concurrent.Executor;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import retrofit.Profiler.RequestInformation;
 import retrofit.client.Client;
@@ -154,6 +157,10 @@ public class RestAdapter {
         new RestHandler());
   }
 
+  private static interface ResponseReady {
+    Object onResponse(Response response) throws IOException;
+  }
+
   private class RestHandler implements InvocationHandler {
     private final Map<Method, RestMethodInfo> methodDetailsCache =
         new LinkedHashMap<Method, RestMethodInfo>();
@@ -193,13 +200,28 @@ public class RestAdapter {
       if (httpExecutor == null || callbackExecutor == null) {
         throw new IllegalStateException("Asynchronous invocation requires calling setExecutors.");
       }
-      Callback<?> callback = (Callback<?>) args[args.length - 1];
-      httpExecutor.execute(new CallbackRunnable(callback, callbackExecutor) {
-        @Override public ResponseWrapper obtainResponse() {
-          return (ResponseWrapper) invokeRequest(methodDetails, args);
+      invokeRequest(methodDetails, args);
+      return null;
+    }
+
+    private class NamedExecutor implements Executor {
+      private String url;
+      private String serverUrl;
+      private NamedExecutor(String serverUrl, String url) {
+        this.url = url;
+        this.serverUrl = serverUrl;
+      }
+      @Override
+      public void execute(Runnable runnable) {
+        if (true)throw new Error("shit");
+        try {
+          // If we are executing asynchronously then update the current thread with a useful name.
+//          Thread.currentThread().setName(THREAD_PREFIX + url.substring(serverUrl.length()));
+          httpExecutor.execute(runnable);
+        } finally {
+//          Thread.currentThread().setName(IDLE_THREAD_NAME);
         }
-      });
-      return null; // Asynchronous methods should have return type of void.
+      }
     }
 
     /**
@@ -208,94 +230,169 @@ public class RestAdapter {
      * @return HTTP response object of specified {@code type} or {@code null}.
      * @throws RetrofitError if any error occurs during the HTTP request.
      */
-    private Object invokeRequest(RestMethodInfo methodDetails, Object[] args) {
+    @SuppressWarnings("unchecked")
+    private Object invokeRequest(final RestMethodInfo methodDetails, Object[] args) {
       methodDetails.init(); // Ensure all relevant method information has been loaded.
 
-      String serverUrl = server.getUrl();
-      String url = serverUrl; // Keep some url in case RequestBuilder throws an exception.
+      final String serverUrl = server.getUrl();
+      final Request request;
+      final Object profilerObject;
+      String tmpUrl = serverUrl;
       try {
-        Request request = new RequestBuilder(converter) //
+        Request tmpRequest = new RequestBuilder(converter) //
             .apiUrl(serverUrl) //
             .args(args) //
             .headers(requestHeaders.get()) //
             .methodInfo(methodDetails) //
             .build();
-        url = request.getUrl();
-
-        if (!methodDetails.isSynchronous) {
-          // If we are executing asynchronously then update the current thread with a useful name.
-          Thread.currentThread().setName(THREAD_PREFIX + url.substring(serverUrl.length()));
-        }
+        tmpUrl = tmpRequest.getUrl();
 
         if (debug) {
-          request = logAndReplaceRequest(request);
+            request = logAndReplaceRequest(tmpRequest);
+        }
+        else {
+          request = tmpRequest;
         }
 
-        Object profilerObject = null;
         if (profiler != null) {
           profilerObject = profiler.beforeCall();
         }
-
-        long start = System.nanoTime();
-        Response response = clientProvider.get().execute(request);
-        long elapsedTime = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
-
-        int statusCode = response.getStatus();
-        if (profiler != null) {
-          RequestInformation requestInfo = getRequestInfo(serverUrl, methodDetails, request);
-          //noinspection unchecked
-          profiler.afterCall(requestInfo, elapsedTime, statusCode, profilerObject);
+        else {
+          profilerObject = null;
         }
-
-        if (debug) {
-          response = logAndReplaceResponse(url, response, elapsedTime);
-        }
-
-        Type type = methodDetails.responseObjectType;
-
-        if (statusCode >= 200 && statusCode < 300) { // 2XX == successful request
-          // Caller requested the raw Response object directly.
-          if (type.equals(Response.class)) {
-            // Read the entire stream and replace with one backed by a byte[]
-            response = Utils.readBodyToBytesIfNecessary(response);
-
-            if (methodDetails.isSynchronous) {
-              return response;
-            }
-            return new ResponseWrapper(response, response);
-          }
-
-          TypedInput body = response.getBody();
-          if (body == null) {
-            return new ResponseWrapper(response, null);
-          }
-          try {
-            Object convert = converter.fromBody(body, type);
-            if (methodDetails.isSynchronous) {
-              return convert;
-            }
-            return new ResponseWrapper(response, convert);
-          } catch (ConversionException e) {
-            // The response body was partially read by the converter. Replace it with null.
-            response = Utils.replaceResponseBody(response, null);
-
-            throw RetrofitError.conversionError(url, response, converter, type, e);
-          }
-        }
-
-        response = Utils.readBodyToBytesIfNecessary(response);
-        throw RetrofitError.httpError(url, response, converter, type);
-      } catch (RetrofitError e) {
-        throw e; // Pass through our own errors.
       } catch (IOException e) {
-        throw RetrofitError.networkError(url, e);
+        throw RetrofitError.networkError(tmpUrl, e);
       } catch (Throwable t) {
-        throw RetrofitError.unexpectedError(url, t);
-      } finally {
-        if (!methodDetails.isSynchronous) {
-          Thread.currentThread().setName(IDLE_THREAD_NAME);
+        throw RetrofitError.unexpectedError(tmpUrl, t);
+      }
+
+      final String url = tmpUrl;
+      final long start = System.nanoTime();
+
+      // execute synchronously
+      if (methodDetails.isSynchronous) {
+        try {
+          return handleResponse(clientProvider.get().execute(request), request,
+                  methodDetails, serverUrl, url, start, profilerObject);
+        } catch (RetrofitError e) {
+          throw e; // Pass through our own errors.
+        } catch (IOException e) {
+          throw RetrofitError.networkError(url, e);
+        } catch (Throwable t) {
+          throw RetrofitError.unexpectedError(url, t);
         }
       }
+
+      // get the callback and create a client
+      final Callback callback = (Callback) args[args.length - 1];
+      final Client client = clientProvider.get();
+
+      // this async call requires an executor, use the httpExecutor
+      FutureTask futureTask = new FutureTask(new Callable() {
+        @Override
+        public Object call() throws Exception {
+          return null;
+        }
+      });
+      if (client.needsExecutor()) {
+        httpExecutor.execute(new CallbackRunnable(callback, callbackExecutor) {
+          @Override
+          public ResponseWrapper obtainResponse() {
+            try {
+              return (ResponseWrapper)handleResponse(client.execute(request), request,
+                      methodDetails, serverUrl, url, start, profilerObject);
+            } catch (IOException e) {
+              throw RetrofitError.networkError(url, e);
+            } catch (Throwable t) {
+              throw RetrofitError.unexpectedError(url, t);
+            }
+          }
+        });
+        return futureTask;
+      }
+
+      // no executor necessary for the http request (nio)
+      clientProvider.get().executeAsync(request, null, new Client.ResponseCallback() {
+        @SuppressWarnings("unchecked")
+        @Override
+        public void success(final Response response) {
+          new CallbackRunnable(callback, callbackExecutor) {
+            @Override
+            public ResponseWrapper obtainResponse() {
+              try {
+                return  (ResponseWrapper) handleResponse(client.execute(request), request,
+                        methodDetails, serverUrl, url, start, profilerObject);
+              } catch (IOException e) {
+                throw RetrofitError.networkError(url, e);
+              }
+            }
+          }.run();
+        }
+
+        @Override
+        public void failure(final RetrofitError e) {
+          System.out.println("response failed");
+          callbackExecutor.execute(new Runnable() {
+            @Override
+            public void run() {
+              callback.failure(e);
+            }
+          });
+        }
+      });
+      return null;
+    }
+  }
+
+  Object handleResponse(Response response, final Request request,
+                        final RestMethodInfo methodDetails, final String serverUrl,
+                        final String url, final long start, final Object profilerObject)
+          throws IOException {
+    long elapsedTime = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+
+    int statusCode = response.getStatus();
+    if (profiler != null) {
+      RequestInformation requestInfo = getRequestInfo(serverUrl, methodDetails, request);
+      //noinspection unchecked
+      profiler.afterCall(requestInfo, elapsedTime, statusCode, profilerObject);
+    }
+
+    if (debug) {
+      response = logAndReplaceResponse(url, response, elapsedTime);
+    }
+
+    Type type = methodDetails.responseObjectType;
+
+    if (statusCode < 200 || statusCode >= 300) { // 2XX == successful request
+      response = Utils.readBodyToBytesIfNecessary(response);
+      throw RetrofitError.httpError(url, response, converter, type);
+    }
+    // Caller requested the raw Response object directly.
+    if (type.equals(Response.class)) {
+      // Read the entire stream and replace with one backed by a byte[]
+      response = Utils.readBodyToBytesIfNecessary(response);
+
+      if (methodDetails.isSynchronous) {
+        return response;
+      }
+      return new ResponseWrapper(response, response);
+    }
+
+    TypedInput body = response.getBody();
+    if (body == null) {
+      return new ResponseWrapper(response, null);
+    }
+    try {
+      Object convert = converter.fromBody(body, type);
+      if (methodDetails.isSynchronous) {
+        return convert;
+      }
+      return new ResponseWrapper(response, convert);
+    } catch (ConversionException e) {
+      // The response body was partially read by the converter. Replace it with null.
+      response = Utils.replaceResponseBody(response, null);
+
+      throw RetrofitError.conversionError(url, response, converter, type, e);
     }
   }
 

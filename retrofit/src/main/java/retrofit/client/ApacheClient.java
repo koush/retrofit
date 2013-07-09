@@ -23,6 +23,8 @@ import java.io.OutputStream;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Executor;
+
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpResponse;
 import org.apache.http.StatusLine;
@@ -33,11 +35,14 @@ import org.apache.http.entity.AbstractHttpEntity;
 import org.apache.http.impl.client.DefaultHttpClient;
 import org.apache.http.message.BasicHeader;
 import org.apache.http.util.EntityUtils;
+
+import retrofit.Callback;
+import retrofit.RetrofitError;
 import retrofit.mime.TypedByteArray;
 import retrofit.mime.TypedOutput;
 
 /** A {@link Client} which uses an implementation of Apache's {@link HttpClient}. */
-public class ApacheClient implements Client {
+public class ApacheClient extends ClientBase {
   private final HttpClient client;
 
   /** Creates an instance backed by {@link DefaultHttpClient}. */
